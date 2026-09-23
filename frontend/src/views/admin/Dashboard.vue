@@ -56,7 +56,7 @@
           <template #header>
             <span>最近文章</span>
           </template>
-          <el-table :data="recentArticles" style="width: 100%">
+          <el-table :data="recentArticles" v-loading="loading" style="width: 100%">
             <el-table-column prop="title" label="标题" />
             <el-table-column prop="tags" label="标签" width="200">
               <template #default="{ row }">
@@ -87,6 +87,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import api from '../../api'
 
 const router = useRouter()
@@ -98,39 +99,27 @@ const stats = reactive({
 })
 
 const recentArticles = ref([])
+const loading = ref(false)
 
 onMounted(() => {
-  fetchStats()
-  fetchRecentArticles()
+  fetchDashboard()
 })
 
-async function fetchStats() {
+// All dashboard numbers come from one endpoint so they always agree with
+// each other, regardless of pagination limits or stored date formats
+async function fetchDashboard() {
+  loading.value = true
   try {
-    const [articlesRes, tagsRes] = await Promise.all([
-      api.get('/articles', { params: { page: 1, limit: 1000 } }),
-      api.get('/tags')
-    ])
-    
-    stats.totalArticles = articlesRes.data.pagination.total
-    stats.totalTags = tagsRes.data.tags.length
-    
-    // Calculate articles from this week
-    const oneWeekAgo = new Date()
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
-    stats.recentArticles = articlesRes.data.articles.filter(
-      a => new Date(a.created_at) > oneWeekAgo
-    ).length
+    const { data } = await api.get('/stats')
+    stats.totalArticles = data.totalArticles
+    stats.totalTags = data.totalTags
+    stats.recentArticles = data.weeklyNewArticles
+    recentArticles.value = data.recentArticles
   } catch (error) {
-    console.error('Failed to fetch stats:', error)
-  }
-}
-
-async function fetchRecentArticles() {
-  try {
-    const response = await api.get('/articles', { params: { page: 1, limit: 5 } })
-    recentArticles.value = response.data.articles
-  } catch (error) {
-    console.error('Failed to fetch recent articles:', error)
+    console.error('Failed to fetch dashboard stats:', error)
+    ElMessage.error('获取统计数据失败')
+  } finally {
+    loading.value = false
   }
 }
 

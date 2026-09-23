@@ -23,6 +23,10 @@ app.use('/api/articles', articlesRouter);
 const { getTags } = require('./routes/articles');
 app.get('/api/tags', getTags);
 
+// Stats route
+const { getStats } = require('./routes/articles');
+app.get('/api/stats', getStats);
+
 // Error handling
 app.use((err, req, res, next) => {
   console.error(err.stack);

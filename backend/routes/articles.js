@@ -4,6 +4,34 @@ const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Number of recent articles returned by the stats endpoint
+const RECENT_ARTICLES_LIMIT = 5;
+
+// Shared processing: split a raw article row's comma-separated tags into an array
+function parseArticle(article) {
+  return {
+    ...article,
+    tags: article.tags ? article.tags.split(',').map(t => t.trim()) : []
+  };
+}
+
+// Shared processing: collect the sorted list of unique tags across all articles
+function getAllTags(db) {
+  const articles = db.prepare("SELECT tags FROM articles WHERE tags IS NOT NULL AND tags != ''").all();
+  const tagSet = new Set();
+
+  articles.forEach(article => {
+    if (article.tags) {
+      article.tags.split(',').forEach(tag => {
+        const trimmed = tag.trim();
+        if (trimmed) tagSet.add(trimmed);
+      });
+    }
+  });
+
+  return Array.from(tagSet).sort();
+}
+
 // GET /api/articles - List articles with pagination, tag filter and search
 router.get('/', (req, res) => {
   const db = getDb();
@@ -41,10 +69,7 @@ router.get('/', (req, res) => {
     const { total } = db.prepare(countQuery).get(...countParams);
     const articles = db.prepare(articlesQuery).all(...params);
 
-    const parsedArticles = articles.map(article => ({
-      ...article,
-      tags: article.tags ? article.tags.split(',').map(t => t.trim()) : []
-    }));
+    const parsedArticles = articles.map(parseArticle);
 
     res.json({
       articles: parsedArticles,
@@ -73,10 +98,7 @@ router.get('/:id', (req, res) => {
       return res.status(404).json({ error: 'Article not found' });
     }
 
-    res.json({
-      ...article,
-      tags: article.tags ? article.tags.split(',').map(t => t.trim()) : []
-    });
+    res.json(parseArticle(article));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch article' });
@@ -103,10 +125,7 @@ router.post('/', authenticateToken, (req, res) => {
 
     const article = db.prepare('SELECT * FROM articles WHERE id = ?').get(result.lastInsertRowid);
 
-    res.status(201).json({
-      ...article,
-      tags: article.tags ? article.tags.split(',').map(t => t.trim()) : []
-    });
+    res.status(201).json(parseArticle(article));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to create article' });
@@ -139,10 +158,7 @@ router.put('/:id', authenticateToken, (req, res) => {
 
     const article = db.prepare('SELECT * FROM articles WHERE id = ?').get(id);
 
-    res.json({
-      ...article,
-      tags: article.tags ? article.tags.split(',').map(t => t.trim()) : []
-    });
+    res.json(parseArticle(article));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update article' });
@@ -173,25 +189,40 @@ function getTags(req, res) {
   const db = getDb();
 
   try {
-    const articles = db.prepare('SELECT tags FROM articles WHERE tags IS NOT NULL AND tags != ""').all();
-    const tagSet = new Set();
-
-    articles.forEach(article => {
-      if (article.tags) {
-        article.tags.split(',').forEach(tag => {
-          const trimmed = tag.trim();
-          if (trimmed) tagSet.add(trimmed);
-        });
-      }
-    });
-
-    const tags = Array.from(tagSet).sort();
-    res.json({ tags });
+    res.json({ tags: getAllTags(db) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch tags' });
   }
 }
 
+// GET /api/stats - Dashboard statistics from a single consistent source
+// (exported for use in server.js)
+function getStats(req, res) {
+  const db = getDb();
+
+  try {
+    const { total: totalArticles } = db.prepare('SELECT COUNT(*) as total FROM articles').get();
+
+    // datetime() normalizes both 'YYYY-MM-DD HH:MM:SS' and ISO 8601 stored
+    // values, so the weekly boundary is computed the same way for every row
+    const { total: weeklyNewArticles } = db.prepare(
+      `SELECT COUNT(*) as total FROM articles WHERE datetime(created_at) > datetime('now', '-7 days')`
+    ).get();
+
+    const totalTags = getAllTags(db).length;
+
+    const recentArticles = db.prepare(
+      'SELECT id, title, summary, tags, created_at, updated_at FROM articles ORDER BY datetime(created_at) DESC LIMIT ?'
+    ).all(RECENT_ARTICLES_LIMIT).map(parseArticle);
+
+    res.json({ totalArticles, totalTags, weeklyNewArticles, recentArticles });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+}
+
 module.exports = router;
 module.exports.getTags = getTags;
+module.exports.getStats = getStats;
