@@ -22,7 +22,7 @@
       <el-col :span="8">
         <el-card shadow="hover">
           <div class="stat-item">
-            <div class="stat-number">{{ stats.recentArticles }}</div>
+            <div class="stat-number">{{ stats.weeklyNew }}</div>
             <div class="stat-label">本周新文章</div>
           </div>
         </el-card>
@@ -56,7 +56,7 @@
           <template #header>
             <span>最近文章</span>
           </template>
-          <el-table :data="recentArticles" style="width: 100%">
+          <el-table :data="recentArticles" v-loading="loading" style="width: 100%">
             <el-table-column prop="title" label="标题" />
             <el-table-column prop="tags" label="标签" width="200">
               <template #default="{ row }">
@@ -87,50 +87,46 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import api from '../../api'
+import { formatDate } from '../../utils/date'
 
 const router = useRouter()
 
 const stats = reactive({
   totalArticles: 0,
   totalTags: 0,
-  recentArticles: 0
+  weeklyNew: 0
 })
 
 const recentArticles = ref([])
+const loading = ref(false)
 
 onMounted(() => {
-  fetchStats()
-  fetchRecentArticles()
+  fetchDashboardStats()
 })
 
-async function fetchStats() {
-  try {
-    const [articlesRes, tagsRes] = await Promise.all([
-      api.get('/articles', { params: { page: 1, limit: 1000 } }),
-      api.get('/tags')
-    ])
-    
-    stats.totalArticles = articlesRes.data.pagination.total
-    stats.totalTags = tagsRes.data.tags.length
-    
-    // Calculate articles from this week
-    const oneWeekAgo = new Date()
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7)
-    stats.recentArticles = articlesRes.data.articles.filter(
-      a => new Date(a.created_at) > oneWeekAgo
-    ).length
-  } catch (error) {
-    console.error('Failed to fetch stats:', error)
-  }
+function resetStats() {
+  stats.totalArticles = 0
+  stats.totalTags = 0
+  stats.weeklyNew = 0
+  recentArticles.value = []
 }
 
-async function fetchRecentArticles() {
+async function fetchDashboardStats() {
+  loading.value = true
   try {
-    const response = await api.get('/articles', { params: { page: 1, limit: 5 } })
-    recentArticles.value = response.data.articles
+    const { data } = await api.get('/articles/stats')
+    stats.totalArticles = data.totalArticles
+    stats.totalTags = data.totalTags
+    stats.weeklyNew = data.weeklyNewCount
+    recentArticles.value = data.recentArticles
   } catch (error) {
-    console.error('Failed to fetch recent articles:', error)
+    console.error('Failed to fetch stats:', error)
+    resetStats()
+    ElMessage.error('获取统计数据失败')
+  } finally {
+    loading.value = false
   }
 }
 
@@ -148,11 +144,6 @@ function goToHome() {
 
 function editArticle(id) {
   router.push(`/admin/articles/${id}/edit`)
-}
-
-function formatDate(dateStr) {
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('zh-CN')
 }
 </script>
 
